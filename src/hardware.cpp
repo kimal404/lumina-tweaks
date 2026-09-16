@@ -120,7 +120,7 @@ bool HardwareManager::probeUnisoc() {
         std::string name = entry->d_name;
         if (name.find(".gpu") != std::string::npos || name.find("gpu") != std::string::npos) {
             std::string path = "/sys/class/devfreq/" + name;
-            if (access((path + "/min_freq").c_OK | W_OK) == 0) {
+            if (access((path + "/min_freq").c_str(), W_OK) == 0) {
                 state.gpu_node = path;
                 state.gpu_default_gov = readSysfs(path + "/governor");
                 state.gpu_default_min = std::strtoull(readSysfs(path + "/min_freq").c_str(), nullptr, 10);
