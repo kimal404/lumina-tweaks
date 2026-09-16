@@ -1,36 +1,48 @@
-<p>
+<p align="center">
   <h1 align="center">Lumina Tweaks</h1>
-  <p align="center">Lightweight Native C++ Android Optimization Daemon</p>
+  <p align="center">Native System Performance Daemon for Android</p>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Status-Stable-brightgreen?style=for-the-badge" alt="Status">
+  <img src="https://img.shields.io/badge/License-GPL--3.0-blue?style=for-the-badge" alt="License">
+  <img src="https://img.shields.io/badge/Android-11+-blue?style=for-the-badge&logo=android" alt="Android Version">
+  <img src="https://img.shields.io/badge/Root-KernelSU%20%7C%20APatch%20%7C%20Magisk-black?style=for-the-badge" alt="Root">
 </p>
 
 ---
 
-## Overview
-**Lumina Tweaks** adalah modul optimisi system berbasis daemon native C++ (`luminad`) yang berjalan langsung di level kernel (`sysfs` dan `cgroups`) tanpa melewati framework Java Android.
+## ⚡ Overview
+**Lumina Tweaks** is an optimization framework powered by `luminad`, a native C++ runtime daemon. Interfacing directly with Linux kernel nodes (`sysfs`, `cgroups`, and schedulers), it delivers consistent gaming performance while maintaining battery efficiency and system stability.
 
 ---
 
-H� Features
-
-* **Native C++ Engine (`luminad`)**: Manipulasi node kernel langsung via posix syscall, memangkas beban fork() shell.
-* **Dynamic Polling**: 1000ms saat idle untuk C-State deep sleep, dan 500ms saat gaming.
-* **Anti-Overwrite OEM Enforcement**: Mencegah daemon thermal vendor (Joyose, PowerHAL, Mi_Thermald) menimpa profil.
-* **Flash Wear Protection**: Cache status di RAM mencegah penulisan berulang ke storage UFS (module.prop).
-
----
-
-H� Profiles
-
-* **Profile Balance**: Mode standard harian, governor schedutil.
-* **Profile Peformace**: Mode gaming maksimal, clock dikinci. **Profile Peformace Lite**: Mode gaming hemat daya dengan scaling adaptif.  
-* **Profile Eco**: Otomatis aktif saat Battery Saver Android nyala.
+## 🚀 Key Features
+* **Native C++ Engine (`luminad`):** Direct kernel dispatching via POSIX system calls, eliminating shell `fork()` overhead and runtime latency.
+* **Autonomous Profile Switching:** Instantly switches system profiles when target games are detected in foreground.
+* **Kernel Lock Enforcement:** Actively prevents vendor thermal services from overriding tuned CPU/GPU frequencies.
+* **WebUI Dashboard:** Integrated Vue-based control panel accessible directly inside KernelSU, APatch, and Magisk.
 
 ---
 
-H� Build from Source
+## 📊 Profiles
+| Profile | Target State | Description |
+| :--- | :--- | :--- |
+| **Performance** | Hardcore Gaming | Clocks locked to peak tables; thermal limits unconstrained. |
+| **Performance Lite** | Casual Gaming | Adaptive scaling with conservative thermal safety limits. |
+| **Balance** | Daily Usage | Default dynamic scaling using `schedutil` governor. |
+| **Eco** | Battery Saver | Automatic frequency limits triggered by Android battery saver. |
 
-```bash
-clang++ -O3 -std=c++17 -pthread -Iinclude \
-  src/utils.cpp src/config.cpp src/profile.cpp src/hardware.cpp src/monitor.cpp src/main.cpp \
-  -o luminad
-```
+---
+
+## 🤝 Credits & Acknowledgements
+* **[Encore Tweaks](https://github.com/Rem01Gaming/encore)** by [@Rem01Gaming](https://github.com/Rem01Gaming)
+  * **WebUI Base:** Frontend WebUI dashboard is adapted and modified from Encore's Vue WebUI.
+  * **Tweaks Reference:** Kernel node logic and scheduler tuning reference.
+* **[AZenith](https://github.com/Liliya2727/AZenith)** by [@Zexshia](https://github.com/Liliya2727)
+  * **Reference Only:** Reference for profile design concepts and system tuning ideas.
+
+---
+
+## ⚖️ License
+This project is licensed under the **GNU General Public License v3.0 (GPL-3.0)** in compliance with the modified WebUI base. See [NOTICE.md](NOTICE.md) for full attribution details.
