@@ -1,0 +1,22 @@
+# Dependensi
+node_modules/
+.pnpm-store/
+
+# Hasil Build WebUI
+dist/
+webui/dist/
+webui/module/
+module/webroot/assets/
+module/webroot/index.html
+
+# File Temporary & Backup
+*.bak
+*.tmp
+*.swp
+.DS_Store
+package-lock.json
+
+# Executable Binary Lokal
+luminad
+out/
+luminad
