@@ -1,0 +1,6 @@
+{
+  "contentSecurityPolicy": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' ksu:; font-src 'self' data:; connect-src 'self'",
+  "exitConfirm": false,
+  "icon": "icon.webp",
+  "title": "LUMina Tweaks"
+}
