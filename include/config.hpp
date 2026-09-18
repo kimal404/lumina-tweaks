@@ -7,16 +7,24 @@
 struct GameRule {
     std::string lite_mode = "default";
     bool enable_dnd = false;
+    bool enabled = true;
 };
 
 struct AppConfig {
-    bool lite_mode = false;
+    std::mutex mtx;
     bool disable_thermal = false;
+    bool lite_mode = false;
     bool dnd_mode = false;
-
     std::unordered_set<std::string> gamelist;
     std::unordered_map<std::string, GameRule> game_rules;
-    std::mutex mtx;
+
+    bool is_enabled_for(const std::string& pkg) const {
+        auto it = game_rules.find(pkg);
+        if (it != game_rules.end()) {
+            return it->second.enabled;
+        }
+        return true;
+    }
 
     bool is_lite_for(const std::string& pkg) const {
         auto it = game_rules.find(pkg);

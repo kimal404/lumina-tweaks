@@ -1,6 +1,8 @@
 #pragma once
 
 namespace Monitor {
-    void start();
-    void stop();
+
+void start();
+void stop();
+
 }

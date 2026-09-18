@@ -1,7 +1,6 @@
 id=lumina
-name=LUMina Tweaks
-version=v1.2.0
+name=Lumina Tweaks
+version=v1.2.0 - UnisocDebug
 versionCode=120
-author=Mall
-description=[🍃 Balanced] Adaptive C++ engine active.
-webuiIcon=webroot/favicon.ico
+author=kimal404
+description=[Standby] Adaptive C++ engine active.

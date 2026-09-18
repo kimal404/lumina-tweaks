@@ -1,5 +1,6 @@
 #include "config.hpp"
 #include "utils.hpp"
+#include "json.hpp"
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -8,9 +9,22 @@
 #include <sys/inotify.h>
 #include <cstring>
 
+using json = nlohmann::json;
 AppConfig g_config;
 
 namespace ConfigManager {
+
+static bool parse_bool(const json& j, const std::string& key, bool default_val) {
+    if (!j.contains(key)) return default_val;
+    const auto& val = j[key];
+    if (val.is_boolean()) return val.get<bool>();
+    if (val.is_number()) return val.get<int>() != 0;
+    if (val.is_string()) {
+        std::string s = val.get<std::string>();
+        return (s == "true" || s == "on" || s == "1");
+    }
+    return default_val;
+}
 
 void reload() {
     std::lock_guard<std::mutex> lock(g_config.mtx);
@@ -19,78 +33,52 @@ void reload() {
     {
         std::ifstream f("/data/adb/.config/lumina/config.json");
         if (f.is_open()) {
-            std::stringstream ss;
-            ss << f.rdbuf();
-            std::string s = ss.str();
-            g_config.disable_thermal = (s.find("\"disable_thermal\": true") != std::string::npos ||
-                                        s.find("\"disable_thermal\":true") != std::string::npos ||
-                                        s.find("\"disable_thermal\": 1") != std::string::npos);
-
-            g_config.lite_mode = (s.find("\"lite_mode\": true") != std::string::npos ||
-                                  s.find("\"lite_mode\":true") != std::string::npos ||
-                                  s.find("\"lite_mode\": \"on\"") != std::string::npos ||
-                                  s.find("\"lite_mode\": 1") != std::string::npos);
-
-            g_config.dnd_mode = (s.find("\"enable_dnd\": true") != std::string::npos ||
-                                 s.find("\"enable_dnd\":true") != std::string::npos ||
-                                 s.find("\"dnd_mode\": true") != std::string::npos ||
-                                 s.find("\"enable_dnd\": 1") != std::string::npos);
+            try {
+                json j = json::parse(f);
+                g_config.disable_thermal = parse_bool(j, "disable_thermal", false);
+                g_config.lite_mode       = parse_bool(j, "lite_mode", false);
+                g_config.dnd_mode        = parse_bool(j, "enable_dnd", parse_bool(j, "dnd_mode", false));
+            } catch (const json::parse_error& e) {
+                std::cerr << "[CONFIG] Gagal parse config.json: " << e.what() << std::endl;
+            }
         }
     }
 
     // 2. Baca daftar package dan rule per-app dari gamelist.json
-    g_config.gamelist.clear();
-    g_config.game_rules.clear();
-
     {
         std::ifstream f("/data/adb/.config/lumina/gamelist.json");
         if (f.is_open()) {
-            std::string line;
-            std::string current_pkg = "";
+            try {
+                json j = json::parse(f);
+                if (j.is_object()) {
+                    decltype(g_config.gamelist) temp_gamelist;
+                    decltype(g_config.game_rules) temp_rules;
 
-            while (std::getline(f, line)) {
-                size_t colon = line.find(':');
-                size_t brace = line.find('{');
+                    for (auto& [pkg, data] : j.items()) {
+                        if (pkg.empty() || pkg.find('.') == std::string::npos) continue;
 
-                // Deteksi awal objek package: "com.package.name": {
-                if (brace != std::string::npos && colon != std::string::npos) {
-                    size_t q1 = line.find('"');
-                    size_t q2 = (q1 != std::string::npos) ? line.find('"', q1 + 1) : std::string::npos;
-                    if (q1 != std::string::npos && q2 != std::string::npos && q2 < colon) {
-                        std::string pkg = line.substr(q1 + 1, q2 - q1 - 1);
-                        if (pkg.find('.') != std::string::npos) {
-                            current_pkg = pkg;
-                            g_config.gamelist.insert(pkg);
-                            g_config.game_rules[pkg] = GameRule();
+                        temp_gamelist.insert(pkg);
+                        GameRule rule;
+
+                        if (data.is_object()) {
+                            rule.enabled = parse_bool(data, "enabled", true);
+                            if (data.contains("lite_mode")) {
+                                if (data["lite_mode"].is_string()) {
+                                    rule.lite_mode = data["lite_mode"].get<std::string>();
+                                } else if (data["lite_mode"].is_boolean()) {
+                                    rule.lite_mode = data["lite_mode"].get<bool>() ? "on" : "off";
+                                }
+                            }
+                            rule.enable_dnd = parse_bool(data, "enable_dnd", false);
                         }
+                        temp_rules[pkg] = rule;
                     }
-                    continue;
-                }
 
-                if (current_pkg.empty()) continue;
-
-                if (line.find('}') != std::string::npos) {
-                    current_pkg = "";
-                    continue;
+                    g_config.gamelist = std::move(temp_gamelist);
+                    g_config.game_rules = std::move(temp_rules);
                 }
-
-                if (line.find("\"lite_mode\"") != std::string::npos) {
-                    if (line.find("\"on\"") != std::string::npos) {
-                        g_config.game_rules[current_pkg].lite_mode = "on";
-                    } else if (line.find("\"off\"") != std::string::npos) {
-                        g_config.game_rules[current_pkg].lite_mode = "off";
-                    } else if (line.find("\"default\"") != std::string::npos) {
-                        g_config.game_rules[current_pkg].lite_mode = "default";
-                    }
-                }
-
-                if (line.find("\"enable_dnd\"") != std::string::npos) {
-                    if (line.find("true") != std::string::npos) {
-                        g_config.game_rules[current_pkg].enable_dnd = true;
-                    } else if (line.find("false") != std::string::npos) {
-                        g_config.game_rules[current_pkg].enable_dnd = false;
-                    }
-                }
+            } catch (const json::parse_error& e) {
+                std::cerr << "[CONFIG] Race write gamelist.json, pertahankan data lama." << std::endl;
             }
         }
     }
@@ -98,7 +86,9 @@ void reload() {
     std::cout << "[CONFIG] Terbaca: " << g_config.gamelist.size() << " game dari gamelist.json" << std::endl;
     for (const auto& g : g_config.gamelist) {
         auto rule = g_config.game_rules[g];
-        std::cout << "[CONFIG] -> " << g << " [Lite: " << rule.lite_mode 
+        std::cout << "[CONFIG] -> " << g 
+                  << " [Enabled: " << (rule.enabled ? "ON" : "OFF")
+                  << ", Lite: " << rule.lite_mode 
                   << ", DND: " << (rule.enable_dnd ? "ON" : "OFF") << "]" << std::endl;
     }
 }

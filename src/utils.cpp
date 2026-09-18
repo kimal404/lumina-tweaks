@@ -5,6 +5,8 @@
 #include <dirent.h>
 #include <cstdlib>
 #include <cstdio>
+#include <algorithm>
+#include <sys/stat.h>
 
 namespace Utils {
 
@@ -15,6 +17,20 @@ bool write_sysfs(const std::string& path, const std::string& value) {
     if (!file.is_open()) return false;
     file << value;
     return true;
+}
+
+bool write_sysfs_verify(const std::string& path, const std::string& value, int retries, bool lock_ro) {
+    chmod(path.c_str(), 0666);
+    for (int i = 0; i < retries; ++i) {
+        write_sysfs(path, value);
+        if (trim(read_sysfs(path)) == trim(value)) {
+            if (lock_ro) chmod(path.c_str(), 0444);
+            return true;
+        }
+        usleep(50000);
+    }
+    if (lock_ro) chmod(path.c_str(), 0444);
+    return false;
 }
 
 std::string read_sysfs(const std::string& path) {
@@ -33,7 +49,55 @@ std::string trim(const std::string& str) {
 }
 
 bool is_mediatek() {
-    return (access("/proc/ppm", F_OK) == 0 || access("/sys/module/ged", F_OK) == 0);
+    std::string dt_model = read_sysfs("/proc/device-tree/model");
+    std::string dt_compat = read_sysfs("/proc/device-tree/compatible");
+    std::string dt = dt_model + " " + dt_compat;
+    std::transform(dt.begin(), dt.end(), dt.begin(), ::tolower);
+    if (dt.find("mt") != std::string::npos || dt.find("mediatek") != std::string::npos) return true;
+
+    return (access("/proc/ppm", F_OK) == 0 || 
+            access("/sys/module/ged", F_OK) == 0 ||
+            access("/proc/gpufreqv2", F_OK) == 0 ||
+            access("/sys/kernel/helio-dvfsrc", F_OK) == 0);
+}
+
+bool is_snapdragon() {
+    std::string dt_model = read_sysfs("/proc/device-tree/model");
+    std::string dt_compat = read_sysfs("/proc/device-tree/compatible");
+    std::string dt = dt_model + " " + dt_compat;
+    std::transform(dt.begin(), dt.end(), dt.begin(), ::tolower);
+    if (dt.find("qcom") != std::string::npos || dt.find("qualcomm") != std::string::npos || dt.find("snapdragon") != std::string::npos) return true;
+
+    return (access("/sys/class/kgsl/kgsl-3d0", F_OK) == 0 || 
+            access("/dev/kgsl-3d0", F_OK) == 0 ||
+            access("/sys/devices/soc0/qcom,chip-id", F_OK) == 0);
+}
+
+bool is_unisoc() {
+    std::string dt_model = read_sysfs("/proc/device-tree/model");
+    std::string dt_compat = read_sysfs("/proc/device-tree/compatible");
+    std::string dt = dt_model + " " + dt_compat;
+    std::transform(dt.begin(), dt.end(), dt.begin(), ::tolower);
+    if (dt.find("unisoc") != std::string::npos || 
+        dt.find("sprd") != std::string::npos || 
+        dt.find("ums") != std::string::npos ||
+        dt.find("sp9") != std::string::npos ||
+        dt.find("sp7") != std::string::npos) {
+        return true;
+    }
+
+    return (access("/sys/module/sprd_mali", F_OK) == 0 ||
+            access("/proc/sprd_thermal", F_OK) == 0 ||
+            access("/sys/class/devfreq/unisoc-gpu", F_OK) == 0 ||
+            access("/sys/class/devfreq/scene-frequency", F_OK) == 0 ||
+            access("/sys/devices/platform/soc/soc:gpu", F_OK) == 0);
+}
+
+SocType get_soc_type() {
+    if (is_unisoc()) return SocType::UNISOC;
+    if (is_mediatek()) return SocType::MEDIATEK;
+    if (is_snapdragon()) return SocType::SNAPDRAGON;
+    return SocType::GENERIC;
 }
 
 std::string get_cmdline(int pid) {
@@ -77,20 +141,17 @@ void send_notif(const std::string& title, const std::string& msg) {
 }
 
 int get_battery_temp() {
-    std::string raw = trim(read_sysfs("/sys/class/power_supply/battery/temp"));
-    if (raw.empty()) {
-        raw = trim(read_sysfs("/sys/class/thermal/thermal_zone0/temp"));
+    int b_temp = 0;
+    std::string raw_b = trim(read_sysfs("/sys/class/power_supply/battery/temp"));
+    if (!raw_b.empty()) {
+        try {
+            long t = std::stol(raw_b);
+            if (t > 10000) b_temp = (int)(t / 1000);
+            else if (t > 100) b_temp = (int)(t / 10);
+            else b_temp = (int)t;
+        } catch (...) {}
     }
-    if (raw.empty()) return 0;
-
-    try {
-        long t = std::stol(raw);
-        if (t > 10000) return (int)(t / 1000);
-        if (t > 100) return (int)(t / 10);
-        return (int)t;
-    } catch (...) {
-        return 0;
-    }
+    return b_temp;
 }
 
 void set_dnd(bool enable) {
@@ -133,6 +194,21 @@ void update_module_desc(const std::string& status) {
     std::ofstream out(prop_path);
     if (out.is_open()) {
         out << new_content;
+    }
+}
+
+void renice_game(int pid, bool boost) {
+    if (pid <= 0) return;
+    if (boost) {
+        std::string cmd = "renice -n -10 -p " + std::to_string(pid) + " >/dev/null 2>&1 &";
+        system(cmd.c_str());
+        std::string oom = "echo -500 > /proc/" + std::to_string(pid) + "/oom_score_adj 2>/dev/null &";
+        system(oom.c_str());
+    } else {
+        std::string cmd = "renice -n 0 -p " + std::to_string(pid) + " >/dev/null 2>&1 &";
+        system(cmd.c_str());
+        std::string oom = "echo 0 > /proc/" + std::to_string(pid) + "/oom_score_adj 2>/dev/null &";
+        system(oom.c_str());
     }
 }
 

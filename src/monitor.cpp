@@ -28,6 +28,7 @@ static int g_grace_ticks = 0;
 
 static bool g_last_is_lite = false;
 static bool g_last_dis_thermal = false;
+static int g_thermal_tier = 0;
 
 static pid_t find_pid_by_pkg(const std::string& pkg_name) {
     std::ifstream cgroup("/dev/cpuset/top-app/cgroup.procs");
@@ -68,6 +69,13 @@ static void restore_state(const std::string& reason) {
         g_dnd_applied = false;
     }
 
+    if (g_game_pid > 0) {
+        Utils::renice_game(g_game_pid, false);
+    }
+
+    g_thermal_tier = 0;
+    Profile::set_lite_thermal_tier(0);
+
     if (g_battery_saver_state) {
         Profile::apply_powersave();
         g_eco_active = true;
@@ -95,15 +103,50 @@ void loop() {
         int sleep_ms = g_active_game.empty() ? 1000 : 500;
         std::this_thread::sleep_for(std::chrono::milliseconds(sleep_ms));
 
-        if (++g_loop_ticks >= 4) {
+        if (++g_loop_ticks >= 2) {
             g_loop_ticks = 0;
-            int temp = Utils::get_battery_temp();
+            int b_temp = Utils::get_battery_temp();
 
-            if (temp >= 45 && !g_thermal_alerted) {
-                Utils::send_notif("Lumina Tweaks", "Thermal Warning (" + std::to_string(temp) + "°C)");
-                g_thermal_alerted = true;
-            } else if (temp <= 42) {
-                g_thermal_alerted = false;
+            if (!g_active_game.empty() && g_last_is_lite) {
+                if (b_temp >= 43) {
+                    if (g_thermal_tier != 4) {
+                        g_thermal_tier = 4;
+                        Profile::set_lite_thermal_tier(4);
+                        Utils::send_notif("Lumina AI", "Suhu " + std::to_string(b_temp) + "°C: Proteksi Aktif (Clock 75%)");
+                        Utils::update_module_desc("Lite [Protection 75% - " + std::to_string(b_temp) + "°C] | " + g_active_game);
+                    }
+                } else if (b_temp >= 40) {
+                    if (g_thermal_tier != 3) {
+                        g_thermal_tier = 3;
+                        Profile::set_lite_thermal_tier(3);
+                        Utils::update_module_desc("Lite [Adaptive 85% - " + std::to_string(b_temp) + "°C] | " + g_active_game);
+                    }
+                } else if (b_temp >= 39) {
+                    if (g_thermal_tier != 2) {
+                        g_thermal_tier = 2;
+                        Profile::set_lite_thermal_tier(2);
+                        Utils::update_module_desc("Lite [Adaptive 90% - " + std::to_string(b_temp) + "°C] | " + g_active_game);
+                    }
+                } else if (b_temp >= 37) {
+                    if (g_thermal_tier != 1) {
+                        g_thermal_tier = 1;
+                        Profile::set_lite_thermal_tier(1);
+                        Utils::update_module_desc("Lite [Maintain 95% - " + std::to_string(b_temp) + "°C] | " + g_active_game);
+                    }
+                } else if (b_temp < 37) {
+                    if (g_thermal_tier != 0) {
+                        g_thermal_tier = 0;
+                        Profile::set_lite_thermal_tier(0);
+                        Utils::update_module_desc("Performance Lite | " + g_active_game);
+                    }
+                }
+            } else {
+                if (b_temp >= 45 && !g_thermal_alerted) {
+                    Utils::send_notif("Lumina Tweaks", "Thermal Warning (" + std::to_string(b_temp) + "°C)");
+                    g_thermal_alerted = true;
+                } else if (b_temp <= 42) {
+                    g_thermal_alerted = false;
+                }
             }
 
             if (g_active_game.empty()) {
@@ -114,13 +157,11 @@ void loop() {
                     g_eco_active = true;
                     Utils::update_module_desc("Eco Mode");
                     Utils::send_notif("Lumina Tweaks", "Profile Eco");
-                    std::cout << "[MONITOR] Battery Saver ON -> Masuk Mode ECO" << std::endl;
                 } else if (!g_battery_saver_state && g_eco_active) {
                     Profile::restore_balanced();
                     g_eco_active = false;
                     Utils::update_module_desc("Balanced");
                     Utils::send_notif("Lumina Tweaks", "Profile Balance");
-                    std::cout << "[MONITOR] Battery Saver OFF -> Masuk Mode Balanced" << std::endl;
                 }
             }
         }
@@ -129,20 +170,24 @@ void loop() {
         bool is_lite = false;
         bool dis_thermal = false;
         bool dnd_enabled = false;
+        bool tweaks_enabled = true;
         bool is_still_in_config = false;
+        bool active_game_enabled = true;
 
         {
             std::lock_guard<std::mutex> lock(g_config.mtx);
             top_game = Utils::find_game_in_cgroup(g_config.gamelist);
 
             if (!top_game.empty()) {
-                is_lite = g_config.is_lite_for(top_game);
-                dis_thermal = g_config.disable_thermal;
-                dnd_enabled = g_config.is_dnd_for(top_game);
+                is_lite        = g_config.is_lite_for(top_game);
+                dis_thermal    = g_config.disable_thermal;
+                dnd_enabled    = g_config.is_dnd_for(top_game);
+                tweaks_enabled = g_config.is_enabled_for(top_game);
             }
 
             if (!g_active_game.empty()) {
-                is_still_in_config = (g_config.gamelist.find(g_active_game) != g_config.gamelist.end());
+                is_still_in_config  = (g_config.gamelist.find(g_active_game) != g_config.gamelist.end());
+                active_game_enabled = g_config.is_enabled_for(g_active_game);
             }
         }
 
@@ -151,7 +196,12 @@ void loop() {
             continue;
         }
 
-        if (!top_game.empty()) {
+        if (!g_active_game.empty() && !active_game_enabled) {
+            restore_state("Tweaks dinonaktifkan");
+            continue;
+        }
+
+        if (!top_game.empty() && tweaks_enabled) {
             g_grace_ticks = 0;
 
             bool state_changed = (g_active_game != top_game) || 
@@ -164,12 +214,15 @@ void loop() {
                 g_last_dis_thermal = dis_thermal;
                 g_game_pid = find_pid_by_pkg(top_game);
                 g_enforce_ticks = 0;
-
-                std::cout << "[MONITOR] Terapkan: " << g_active_game 
-                          << " [Mode: " << (is_lite ? "Lite" : "Performance") << "]" << std::endl;
+                g_thermal_tier = 0;
+                Profile::set_lite_thermal_tier(0);
 
                 Profile::apply_performance(is_lite, dis_thermal);
                 g_eco_active = false;
+
+                if (g_game_pid > 0) {
+                    Utils::renice_game(g_game_pid, true);
+                }
 
                 std::string mode_str = is_lite ? "Performance Lite" : "Performance";
                 Utils::update_module_desc(mode_str + " | " + g_active_game);
@@ -183,12 +236,11 @@ void loop() {
                 }
 
                 if (is_lite) {
-                    Utils::send_notif("Lumina Tweaks", "Profile Peformace Lite");
+                    Utils::send_notif("Lumina Tweaks", "Profile Performance Lite");
                 } else {
-                    Utils::send_notif("Lumina Tweaks", "Profile Peformace");
+                    Utils::send_notif("Lumina Tweaks", "Profile Performance");
                 }
             } else {
-                // Anti-Overwrite Enforcement: Re-apply setiap 4 detik (8 ticks x 500ms)
                 if (++g_enforce_ticks >= 8) {
                     g_enforce_ticks = 0;
                     Profile::apply_performance(g_last_is_lite, g_last_dis_thermal);
@@ -196,7 +248,9 @@ void loop() {
             }
         } else {
             if (!g_active_game.empty()) {
-                if (!is_process_alive(g_game_pid, g_active_game)) {
+                if (!tweaks_enabled) {
+                    restore_state("Tweaks dinonaktifkan");
+                } else if (!is_process_alive(g_game_pid, g_active_game)) {
                     restore_state("Game ditutup permanen (Hard Exit)");
                 } else {
                     g_grace_ticks++;

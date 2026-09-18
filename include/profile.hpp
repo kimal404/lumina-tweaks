@@ -7,4 +7,5 @@ namespace Profile {
     void restore_balanced();
     void apply_powersave();
     bool is_in_performance();
+    void set_lite_thermal_tier(int tier);
 }
